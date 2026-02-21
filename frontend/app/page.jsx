@@ -8,6 +8,7 @@ export default function DashboardPage() {
   const [posts, setPosts] = useState([]);
   const [todayInput, setTodayInput] = useState('');
   const [inputText, setInputText] = useState('');
+  const [concreteDetails, setConcreteDetails] = useState('');
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -27,6 +28,9 @@ export default function DashboardPage() {
         setTodayInput(inputRes.data.what_was_built);
         setInputText(inputRes.data.what_was_built);
       }
+      if (inputRes.data?.concrete_details) {
+        setConcreteDetails(inputRes.data.concrete_details);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -44,7 +48,7 @@ export default function DashboardPage() {
   async function handleSaveInput() {
     try {
       setActionLoading(true);
-      await api.saveTodayInput(inputText);
+      await api.saveTodayInput(inputText, concreteDetails);
       setTodayInput(inputText);
       flash('Daily input saved.');
     } catch (err) {
@@ -99,10 +103,27 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleDiscard() {
+    if (!pending) return;
+    try {
+      setActionLoading(true);
+      setError(null);
+      await api.discardPost(pending.id);
+      flash('Post discarded.');
+      setPending(null);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   const statusBadge = (status) => {
     const map = {
       PENDING: 'bg-yellow-500/20 text-yellow-300',
       POSTED: 'bg-green-500/20 text-green-300',
+      DISCARDED: 'bg-red-500/20 text-red-400',
     };
     return (
       <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${map[status] || 'bg-gray-800 text-gray-400'}`}>
@@ -130,18 +151,31 @@ export default function DashboardPage() {
       )}
 
       {/* Daily Input */}
-      <section>
-        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">
           What did you build today?
         </h2>
-        <textarea
-          className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-gray-500 resize-none"
-          rows={3}
-          placeholder="Optional — describe what you shipped, learned, or worked on today..."
-          value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
-        />
-        <div className="flex items-center gap-3 mt-2">
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">What you worked on</label>
+          <textarea
+            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-gray-500 resize-none"
+            rows={3}
+            placeholder="Optional — describe what you shipped, learned, or worked on today..."
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Concrete details</label>
+          <textarea
+            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-gray-500 resize-none"
+            rows={2}
+            placeholder="Numbers, dates, names, specific events — e.g. '47 signups in 24h', 'launched on Product Hunt at 9am', 'error rate dropped from 8% to 0.3%'"
+            value={concreteDetails}
+            onChange={(e) => setConcreteDetails(e.target.value)}
+          />
+        </div>
+        <div className="flex items-center gap-3">
           <button
             onClick={handleSaveInput}
             disabled={actionLoading}
@@ -206,6 +240,13 @@ export default function DashboardPage() {
                 className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-200 text-sm font-medium py-2.5 rounded-lg transition-colors disabled:opacity-50"
               >
                 🔁 Regenerate
+              </button>
+              <button
+                onClick={handleDiscard}
+                disabled={actionLoading}
+                className="flex-1 bg-red-900/40 hover:bg-red-900/70 text-red-400 text-sm font-medium py-2.5 rounded-lg transition-colors disabled:opacity-50"
+              >
+                🗑️ Discard
               </button>
             </div>
           </div>

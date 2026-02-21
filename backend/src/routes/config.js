@@ -31,6 +31,7 @@ router.put('/', async (req, res) => {
       tone_of_voice,
       subreddits,
       context_blocks,
+      writing_samples,
     } = req.body;
 
     // Check if a config already exists
@@ -52,6 +53,7 @@ router.put('/', async (req, res) => {
           tone_of_voice,
           subreddits: subreddits || [],
           context_blocks: context_blocks || [],
+          writing_samples: writing_samples || '',
           updated_at: new Date().toISOString(),
         })
         .eq('id', existing.id)
@@ -70,6 +72,7 @@ router.put('/', async (req, res) => {
           tone_of_voice,
           subreddits: subreddits || [],
           context_blocks: context_blocks || [],
+          writing_samples: writing_samples || '',
         })
         .select()
         .single();

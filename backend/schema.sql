@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS app_config (
   growth_focus_description TEXT DEFAULT 'Share honest insights about building the app and the personal journey behind it.',
   -- Post generation schedule — updated via Telegram /schedule command (cron expression)
   generate_cron            TEXT DEFAULT '0 9 * * *',
+  -- Writing samples: paste examples of how you actually write, separated by ---
+  -- The AI uses these to match your tone, vocabulary, and sentence structure
+  writing_samples          TEXT DEFAULT '',
   created_at      TIMESTAMPTZ DEFAULT now(),
   updated_at      TIMESTAMPTZ DEFAULT now()
 );
@@ -29,7 +32,8 @@ CREATE TABLE IF NOT EXISTS app_config (
 -- ALTER TABLE app_config
 --   ADD COLUMN IF NOT EXISTS growth_focus_type        TEXT DEFAULT 'BUILD_IN_PUBLIC',
 --   ADD COLUMN IF NOT EXISTS growth_focus_description TEXT DEFAULT 'Share honest insights about building the app and the personal journey behind it.',
---   ADD COLUMN IF NOT EXISTS generate_cron            TEXT DEFAULT '0 9 * * *';
+--   ADD COLUMN IF NOT EXISTS generate_cron            TEXT DEFAULT '0 9 * * *',
+--   ADD COLUMN IF NOT EXISTS writing_samples          TEXT DEFAULT '';
 
 -- Run this if the posts table already exists:
 -- ALTER TABLE posts ADD COLUMN IF NOT EXISTS subreddit TEXT NOT NULL DEFAULT '';
@@ -42,8 +46,13 @@ CREATE TABLE IF NOT EXISTS daily_inputs (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   date             DATE UNIQUE NOT NULL,
   what_was_built   TEXT,
+  -- Specific facts: numbers, dates, names, events — used to ground every claim in the post
+  concrete_details TEXT,
   created_at       TIMESTAMPTZ DEFAULT now()
 );
+
+-- Migration: run this if daily_inputs already exists
+-- ALTER TABLE daily_inputs ADD COLUMN IF NOT EXISTS concrete_details TEXT;
 
 -- ============================================================
 -- posts

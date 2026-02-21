@@ -27,8 +27,8 @@ export const api = {
 
   // Daily input
   getTodayInput: () => request('/api/daily-input/today'),
-  saveTodayInput: (what_was_built) =>
-    request('/api/daily-input', { method: 'POST', body: JSON.stringify({ what_was_built }) }),
+  saveTodayInput: (what_was_built, concrete_details) =>
+    request('/api/daily-input', { method: 'POST', body: JSON.stringify({ what_was_built, concrete_details }) }),
 
   // Posts
   getPosts: () => request('/api/posts'),
@@ -36,4 +36,5 @@ export const api = {
   generatePost: () => request('/api/posts/generate', { method: 'POST' }),
   regeneratePost: (id) => request(`/api/posts/${id}/regenerate`, { method: 'POST' }),
   markPosted: (id) => request(`/api/posts/${id}/mark-posted`, { method: 'POST' }),
+  discardPost: (id) => request(`/api/posts/${id}/discard`, { method: 'POST' }),
 };

@@ -6,11 +6,12 @@ const { sendPost, editPost } = require('./telegram');
  * Core generation logic — shared by daily cron and regenerate flow.
  * Returns the generated content AND the chosen subreddit.
  *
- * @param {Object} config      - app_config row
+ * @param {Object} config                - app_config row
  * @param {string|null} whatBuilt
+ * @param {string|null} concreteDetails  - specific facts, numbers, names to ground the post
  * @returns {{ content: string, subreddit: string }}
  */
-async function _generate(config, whatBuilt) {
+async function _generate(config, whatBuilt, concreteDetails) {
   // Fetch last 5 posted entries to avoid repeating angles
   const { data: recentPosts } = await supabase
     .from('posts')
@@ -31,6 +32,7 @@ async function _generate(config, whatBuilt) {
   const content = await generateRedditPost(
     config,
     whatBuilt,
+    concreteDetails,
     recentPosts || [],
     subreddit
   );
@@ -91,7 +93,8 @@ async function runDailyGeneration() {
   // 4. Generate
   const { content, subreddit } = await _generate(
     config,
-    dailyInput?.what_was_built || null
+    dailyInput?.what_was_built || null,
+    dailyInput?.concrete_details || null
   );
 
   // 5. Save as PENDING — include subreddit for display purposes
@@ -150,17 +153,19 @@ async function regeneratePost(postId) {
   if (configError || !config) throw new Error('No app config found');
 
   let whatBuilt = null;
+  let concreteDetails = null;
   if (existing.daily_input_id) {
     const { data: di } = await supabase
       .from('daily_inputs')
-      .select('what_was_built')
+      .select('what_was_built, concrete_details')
       .eq('id', existing.daily_input_id)
       .maybeSingle();
     whatBuilt = di?.what_was_built || null;
+    concreteDetails = di?.concrete_details || null;
   }
 
   // Generate fresh content — reuse the same subreddit as the original post
-  const { content } = await _generate(config, whatBuilt);
+  const { content } = await _generate(config, whatBuilt, concreteDetails);
 
   const { data: updated, error: updateError } = await supabase
     .from('posts')

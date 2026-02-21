@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../db/supabase');
 const { runDailyGeneration, regeneratePost } = require('../services/generator');
-const { markMessageAsPosted } = require('../services/telegram');
+const { markMessageAsPosted, markMessageAsDiscarded } = require('../services/telegram');
 
 // GET /api/posts
 // List recent posts (latest 30)
@@ -105,12 +105,52 @@ router.post('/:id/mark-posted', async (req, res) => {
 
     // Edit the Telegram message to reflect the posted state
     if (post.telegram_message_id) {
-      await markMessageAsPosted(post.telegram_message_id, post.content);
+      await markMessageAsPosted(post.telegram_message_id, post.subreddit, post.content);
     }
 
     res.json({ data: updated });
   } catch (err) {
     console.error('[POST /:id/mark-posted]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/posts/:id/discard
+// Mark a post as discarded
+router.post('/:id/discard', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data: post, error: fetchError } = await supabase
+      .from('posts')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    if (post.status !== 'PENDING') {
+      return res.status(400).json({ error: `Post is already ${post.status}` });
+    }
+
+    const { data: updated, error: updateError } = await supabase
+      .from('posts')
+      .update({ status: 'DISCARDED' })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (updateError) throw updateError;
+
+    if (post.telegram_message_id) {
+      await markMessageAsDiscarded(post.telegram_message_id, post.subreddit, post.content);
+    }
+
+    res.json({ data: updated });
+  } catch (err) {
+    console.error('[POST /:id/discard]', err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -12,6 +12,7 @@ const defaultConfig = {
   context_blocks: [],
   growth_focus_type: 'BUILD_IN_PUBLIC',
   growth_focus_description: '',
+  writing_samples: '',
 };
 
 export default function ConfigPage() {
@@ -239,6 +240,25 @@ export default function ConfigPage() {
         <p className="text-xs text-gray-600 mt-2">
           Change the active focus by sending <code className="text-gray-500">/focus</code> to your Telegram bot.
         </p>
+      </section>
+
+      {/* Writing Voice */}
+      <section>
+        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
+          My Voice
+        </h2>
+        <p className="text-xs text-gray-600 mb-4">
+          Paste real examples of how you write — tweets, messages, previous posts, anything. Separate
+          each example with <code className="text-gray-500">---</code>. The AI will study these and
+          write in your exact voice.
+        </p>
+        <textarea
+          className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-gray-500 resize-none font-mono"
+          rows={12}
+          placeholder={`Example 1: an old tweet or post you wrote\n\n---\n\nExample 2: a message you sent to someone about the product\n\n---\n\nExample 3: how you explained your idea to a friend`}
+          value={form.writing_samples || ''}
+          onChange={(e) => set('writing_samples', e.target.value)}
+        />
       </section>
 
       {/* Save */}

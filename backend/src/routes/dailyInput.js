@@ -23,17 +23,17 @@ router.get('/today', async (req, res) => {
 });
 
 // POST /api/daily-input
-// Upsert today's "what was built" entry
-// Body: { what_was_built: string }
+// Upsert today's daily input entry
+// Body: { what_was_built: string, concrete_details: string }
 router.post('/', async (req, res) => {
   try {
-    const { what_was_built } = req.body;
+    const { what_was_built, concrete_details } = req.body;
     const today = new Date().toISOString().split('T')[0];
 
     const { data, error } = await supabase
       .from('daily_inputs')
       .upsert(
-        { date: today, what_was_built },
+        { date: today, what_was_built, concrete_details: concrete_details || null },
         { onConflict: 'date' }
       )
       .select()

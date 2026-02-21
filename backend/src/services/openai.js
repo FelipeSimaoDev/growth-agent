@@ -24,6 +24,11 @@ async function generateRedditPost(config, whatBuilt, recentPosts, subreddit) {
     ? whatBuilt
     : 'Nothing specific today — write a general building-in-public or insight post.';
 
+  const focusType = config.growth_focus_type || 'BUILD_IN_PUBLIC';
+  const focusDescription =
+    config.growth_focus_description ||
+    'Share honest insights about building the app and the personal journey behind it.';
+
   const userPrompt = `
 You are helping me write ONE Reddit post for the subreddit: r/${subreddit}
 
@@ -35,6 +40,17 @@ Tone: ${config.tone_of_voice}
 
 === CONTEXT (things I've written about my product) ===
 ${contextBlocksText}
+
+=== CURRENT GROWTH FOCUS ===
+Type: ${focusType}
+Objective: ${focusDescription}
+
+The post must naturally align with this growth focus. Let it shape:
+- The angle you choose (what story to tell)
+- How much you explain vs. show
+- The intensity of the call to action (subtle → strong)
+- Whether to position as builder, user, or observer
+Do NOT reference the focus type label directly. Let it guide the post invisibly.
 
 === WHAT I BUILT OR LEARNED TODAY ===
 ${whatBuiltText}

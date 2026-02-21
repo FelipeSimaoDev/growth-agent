@@ -9,3 +9,5 @@ yarn.lock
 .DS_Store
 .idea/
 .vscode/
+.env.local
+.next/

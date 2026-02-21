@@ -10,6 +10,8 @@ const defaultConfig = {
   tone_of_voice: '',
   subreddits: [],
   context_blocks: [],
+  growth_focus_type: 'BUILD_IN_PUBLIC',
+  growth_focus_description: '',
 };
 
 export default function ConfigPage() {
@@ -214,6 +216,29 @@ export default function ConfigPage() {
             <p className="text-gray-600 text-sm">No context blocks yet. Add one above.</p>
           )}
         </div>
+      </section>
+
+      {/* Growth Focus */}
+      <section>
+        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
+          Growth Focus
+        </h2>
+        {form.growth_focus_type ? (
+          <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-4 space-y-1">
+            <p className="text-xs text-gray-500">Active focus</p>
+            <p className="text-white font-medium">{form.growth_focus_type.replace(/_/g, ' ')}</p>
+            {form.growth_focus_description && (
+              <p className="text-gray-400 text-sm">{form.growth_focus_description}</p>
+            )}
+          </div>
+        ) : (
+          <div className="bg-gray-900 border border-gray-800 rounded-xl px-4 py-4">
+            <p className="text-gray-500 text-sm">No focus set — defaulting to Build in Public.</p>
+          </div>
+        )}
+        <p className="text-xs text-gray-600 mt-2">
+          Change the active focus by sending <code className="text-gray-500">/focus</code> to your Telegram bot.
+        </p>
       </section>
 
       {/* Save */}

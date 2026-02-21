@@ -14,9 +14,19 @@ CREATE TABLE IF NOT EXISTS app_config (
   subreddits      TEXT[] DEFAULT '{}',
   -- context_blocks: array of {title: string, content: string}
   context_blocks  JSONB DEFAULT '[]',
+  -- Growth focus — updated via Telegram /focus command
+  growth_focus_type        TEXT DEFAULT 'BUILD_IN_PUBLIC',
+  growth_focus_description TEXT DEFAULT 'Share honest insights about building the app and the personal journey behind it.',
   created_at      TIMESTAMPTZ DEFAULT now(),
   updated_at      TIMESTAMPTZ DEFAULT now()
 );
+
+-- ============================================================
+-- Migration: run this if app_config already exists
+-- ============================================================
+-- ALTER TABLE app_config
+--   ADD COLUMN IF NOT EXISTS growth_focus_type        TEXT DEFAULT 'BUILD_IN_PUBLIC',
+--   ADD COLUMN IF NOT EXISTS growth_focus_description TEXT DEFAULT 'Share honest insights about building the app and the personal journey behind it.';
 
 -- ============================================================
 -- daily_inputs

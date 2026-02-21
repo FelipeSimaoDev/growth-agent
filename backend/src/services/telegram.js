@@ -1,4 +1,5 @@
 const TelegramBot = require('node-telegram-bot-api');
+const supabase = require('../db/supabase');
 
 let bot = null;
 
@@ -6,20 +7,98 @@ let bot = null;
 let onRegenerate = null;
 let onMarkPosted = null;
 
+// ============================================================
+// Growth focus options
+// Add new entries here to extend available focus types.
+// ============================================================
+const FOCUS_OPTIONS = [
+  {
+    type: 'ACQUIRE_USERS',
+    label: '🎯 Acquire Users',
+    description: 'Drive new user signups by showing the value and ease of getting started with the app.',
+  },
+  {
+    type: 'MEDIA_DRIVEN_USERS',
+    label: '🎥 Attract Media-Driven Users',
+    description: 'Target users who discover apps through viral content, influencers, and visual storytelling.',
+  },
+  {
+    type: 'EDUCATE_ABOUT_APP',
+    label: '📣 Educate About the App',
+    description: "Explain what the app does, who it's for, and why it matters to new audiences.",
+  },
+  {
+    type: 'BUILD_IN_PUBLIC',
+    label: '🔥 Build in Public',
+    description: 'Share honest insights about building the app and the personal journey behind it.',
+  },
+  {
+    type: 'SCALE_AWARENESS',
+    label: '🚀 Scale Awareness',
+    description: 'Maximize reach and brand recognition across communities and platforms.',
+  },
+];
+
+// ============================================================
+// Bot setup
+// ============================================================
 function getBot() {
   if (!bot && process.env.TELEGRAM_BOT_TOKEN) {
     bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 
-    // Log incoming messages — useful for finding your chat ID on first run
+    // Log all incoming messages — helps find your chat ID on first run
     bot.on('message', (msg) => {
       console.log(`[Telegram] Message from chat ${msg.chat.id}: ${msg.text}`);
+    });
+
+    // /focus — show predefined keyboard, or save custom focus if text is provided
+    // Usage:
+    //   /focus              → show predefined options
+    //   /focus <your text>  → save as CUSTOM focus
+    bot.onText(/\/focus/, async (msg) => {
+      const chatId = msg.chat.id;
+
+      // Strip the command itself; handle /focus@botname syntax
+      const customText = (msg.text || '').replace(/^\/focus(@\S+)?/, '').trim();
+
+      if (customText.length > 0) {
+        await handleSetCustomFocus(customText, chatId);
+        return;
+      }
+
+      // No args — show predefined keyboard
+      const { data: config } = await supabase
+        .from('app_config')
+        .select('growth_focus_type')
+        .limit(1)
+        .maybeSingle();
+
+      const currentType = config?.growth_focus_type || 'BUILD_IN_PUBLIC';
+
+      // Each option on its own row; mark the active predefined one with ✓
+      // CUSTOM focus won't match any predefined type, so no ✓ is shown
+      const keyboard = FOCUS_OPTIONS.map((opt) => [
+        {
+          text: opt.type === currentType ? `${opt.label} ✓` : opt.label,
+          callback_data: `set_focus:${opt.type}`,
+        },
+      ]);
+
+      await bot.sendMessage(
+        chatId,
+        '🎯 *Select Growth Focus*\n\nChoose a predefined focus below, or send:\n`/focus your custom focus text`',
+        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+      );
     });
 
     bot.on('callback_query', async (query) => {
       const { data, message } = query;
       await bot.answerCallbackQuery(query.id).catch(() => {}); // dismiss loading spinner
 
-      if (data?.startsWith('regenerate:') && onRegenerate) {
+      if (data?.startsWith('set_focus:')) {
+        const focusType = data.split(':')[1];
+        await handleSetFocus(focusType, message.message_id);
+      } else if (data?.startsWith('regenerate:') && onRegenerate) {
         const postId = data.split(':')[1];
         await onRegenerate(postId, message.message_id);
       } else if (data?.startsWith('mark_posted:') && onMarkPosted) {
@@ -38,19 +117,120 @@ function getBot() {
 }
 
 /**
- * Register the handlers for Telegram inline button callbacks.
+ * Handle a focus selection from the /focus keyboard.
+ * Updates app_config, edits the keyboard to reflect the new selection,
+ * and sends a confirmation message.
+ */
+async function handleSetFocus(focusType, messageId) {
+  const option = FOCUS_OPTIONS.find((o) => o.type === focusType);
+  if (!option) return;
+
+  const b = getBot();
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!b || !chatId) return;
+
+  try {
+    const { data: existing } = await supabase
+      .from('app_config')
+      .select('id')
+      .limit(1)
+      .maybeSingle();
+
+    if (!existing) {
+      await b.sendMessage(chatId, '❌ No app config found. Set up your config first.');
+      return;
+    }
+
+    await supabase
+      .from('app_config')
+      .update({
+        growth_focus_type: option.type,
+        growth_focus_description: option.description,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', existing.id);
+
+    // Update keyboard to show the new active option
+    const updatedKeyboard = FOCUS_OPTIONS.map((opt) => [
+      {
+        text: opt.type === focusType ? `${opt.label} ✓` : opt.label,
+        callback_data: `set_focus:${opt.type}`,
+      },
+    ]);
+
+    await b.editMessageReplyMarkup(
+      { inline_keyboard: updatedKeyboard },
+      { chat_id: chatId, message_id: messageId }
+    );
+
+    await b.sendMessage(
+      chatId,
+      `✅ Growth focus updated to: *${option.label}*\n\n_${option.description}_`,
+      { parse_mode: 'Markdown' }
+    );
+
+    console.log(`[Telegram] Growth focus set to: ${option.type}`);
+  } catch (err) {
+    console.error('[Telegram] Failed to update focus:', err.message);
+    await b.sendMessage(chatId, `❌ Failed to update focus: ${err.message}`).catch(() => {});
+  }
+}
+
+/**
+ * Save a free-text custom focus sent as /focus <text>.
+ * Sets growth_focus_type = 'CUSTOM' and stores the full text as description.
+ */
+async function handleSetCustomFocus(customText, chatId) {
+  const b = getBot();
+  if (!b || !chatId) return;
+
+  try {
+    const { data: existing } = await supabase
+      .from('app_config')
+      .select('id')
+      .limit(1)
+      .maybeSingle();
+
+    if (!existing) {
+      await b.sendMessage(chatId, '❌ No app config found. Set up your config first.');
+      return;
+    }
+
+    await supabase
+      .from('app_config')
+      .update({
+        growth_focus_type: 'CUSTOM',
+        growth_focus_description: customText,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', existing.id);
+
+    await b.sendMessage(
+      chatId,
+      `✅ *Custom growth focus updated.*\n\nCurrent focus:\n_"${customText}"_\n\nAll future content will align with this focus.`,
+      { parse_mode: 'Markdown' }
+    );
+
+    console.log(`[Telegram] Custom growth focus set: "${customText}"`);
+  } catch (err) {
+    console.error('[Telegram] Failed to set custom focus:', err.message);
+    await b.sendMessage(chatId, `❌ Failed to update focus: ${err.message}`).catch(() => {});
+  }
+}
+
+// ============================================================
+// Exported utilities
+// ============================================================
+
+/**
+ * Register the handlers for post-level inline button callbacks.
  * Called from index.js after all services are loaded.
- *
- * @param {{ regenerate: Function, markPosted: Function }} handlers
  */
 function registerCallbackHandlers({ regenerate, markPosted }) {
   onRegenerate = regenerate;
   onMarkPosted = markPosted;
 }
 
-/**
- * Build the inline keyboard shown under every post message.
- */
 function buildKeyboard(postId) {
   return {
     inline_keyboard: [
@@ -65,9 +245,6 @@ function buildKeyboard(postId) {
 /**
  * Send a new post to Telegram with inline action buttons.
  * Returns the Telegram message_id so we can edit it later.
- *
- * @param {Object} post  - post row with id + content
- * @returns {number|null} telegram message_id
  */
 async function sendPost(post) {
   const b = getBot();
@@ -91,7 +268,7 @@ async function sendPost(post) {
 }
 
 /**
- * Edit an existing Telegram message with new content (e.g. after regeneration).
+ * Edit an existing Telegram message with new content (after regeneration).
  * Preserves the inline keyboard.
  */
 async function editPost(messageId, newContent, postId) {
@@ -124,7 +301,7 @@ async function markMessageAsPosted(messageId, originalContent) {
     chat_id: chatId,
     message_id: messageId,
     parse_mode: 'Markdown',
-    reply_markup: { inline_keyboard: [] }, // remove action buttons
+    reply_markup: { inline_keyboard: [] },
   });
 }
 
@@ -144,4 +321,11 @@ async function notify(text) {
 // Initialize bot on module load
 getBot();
 
-module.exports = { sendPost, editPost, markMessageAsPosted, notify, registerCallbackHandlers };
+module.exports = {
+  sendPost,
+  editPost,
+  markMessageAsPosted,
+  notify,
+  registerCallbackHandlers,
+  FOCUS_OPTIONS,
+};

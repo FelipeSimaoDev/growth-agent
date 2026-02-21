@@ -3,9 +3,12 @@ const supabase = require('../db/supabase');
 
 let bot = null;
 
-// Lazily-registered callback handlers — set from index.js to avoid circular deps
+// Lazily-registered handlers — set from index.js to avoid circular deps
 let onRegenerate = null;
 let onMarkPosted = null;
+let onDiscard = null;
+let onGenerate = null;
+let onScheduleChange = null;
 
 // ============================================================
 // Growth focus options
@@ -40,6 +43,52 @@ const FOCUS_OPTIONS = [
 ];
 
 // ============================================================
+// Schedule presets shown in the /schedule keyboard
+// ============================================================
+const SCHEDULE_PRESETS = [
+  { label: '7:00 AM', cron: '0 7 * * *' },
+  { label: '8:00 AM', cron: '0 8 * * *' },
+  { label: '9:00 AM', cron: '0 9 * * *' },
+  { label: '10:00 AM', cron: '0 10 * * *' },
+  { label: '12:00 PM', cron: '0 12 * * *' },
+  { label: '6:00 PM', cron: '0 18 * * *' },
+];
+
+// ============================================================
+// Helpers
+// ============================================================
+
+/**
+ * Convert a cron expression to a human-readable string.
+ * Handles standard "M H * * *" daily patterns.
+ */
+function cronToHuman(expr) {
+  const match = expr?.match(/^(\d+)\s+(\d+)\s+\*\s+\*\s+\*$/);
+  if (match) {
+    const minutes = parseInt(match[1]);
+    const hours = parseInt(match[2]);
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const displayHour = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+    const displayMin = minutes.toString().padStart(2, '0');
+    return `${displayHour}:${displayMin} ${period} UTC`;
+  }
+  return expr || '—';
+}
+
+/**
+ * Convert HH:MM (24h) to a cron expression "M H * * *".
+ * Returns null if the input is invalid.
+ */
+function timeToCron(hhmm) {
+  const match = hhmm.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const h = parseInt(match[1]);
+  const m = parseInt(match[2]);
+  if (h > 23 || m > 59) return null;
+  return `${m} ${h} * * *`;
+}
+
+// ============================================================
 // Bot setup
 // ============================================================
 function getBot() {
@@ -51,14 +100,17 @@ function getBot() {
       console.log(`[Telegram] Message from chat ${msg.chat.id}: ${msg.text}`);
     });
 
+    // /generate — trigger post generation immediately
+    bot.onText(/\/generate/, async (msg) => {
+      if (onGenerate) await onGenerate(msg.chat.id);
+    });
+
     // /focus — show predefined keyboard, or save custom focus if text is provided
     // Usage:
     //   /focus              → show predefined options
     //   /focus <your text>  → save as CUSTOM focus
     bot.onText(/\/focus/, async (msg) => {
       const chatId = msg.chat.id;
-
-      // Strip the command itself; handle /focus@botname syntax
       const customText = (msg.text || '').replace(/^\/focus(@\S+)?/, '').trim();
 
       if (customText.length > 0) {
@@ -66,7 +118,6 @@ function getBot() {
         return;
       }
 
-      // No args — show predefined keyboard
       const { data: config } = await supabase
         .from('app_config')
         .select('growth_focus_type')
@@ -91,19 +142,65 @@ function getBot() {
       );
     });
 
+    // /schedule — show current schedule + preset keyboard, or set custom time
+    // Usage:
+    //   /schedule            → show current schedule + preset options
+    //   /schedule HH:MM      → set custom daily time (24h, UTC)
+    bot.onText(/\/schedule/, async (msg) => {
+      const chatId = msg.chat.id;
+      const arg = (msg.text || '').replace(/^\/schedule(@\S+)?/, '').trim();
+
+      if (arg.length > 0) {
+        await handleSetCustomSchedule(arg, chatId);
+        return;
+      }
+
+      const { data: config } = await supabase
+        .from('app_config')
+        .select('generate_cron')
+        .limit(1)
+        .maybeSingle();
+
+      const currentCron = config?.generate_cron || '0 9 * * *';
+      const currentLabel = cronToHuman(currentCron);
+
+      // Build 2-per-row keyboard; mark the active preset with ✓
+      const rows = [];
+      for (let i = 0; i < SCHEDULE_PRESETS.length; i += 2) {
+        const row = SCHEDULE_PRESETS.slice(i, i + 2).map((p) => ({
+          text: p.cron === currentCron ? `${p.label} ✓` : p.label,
+          callback_data: `set_schedule:${p.cron}`,
+        }));
+        rows.push(row);
+      }
+
+      await bot.sendMessage(
+        chatId,
+        `🕐 *Post Generation Schedule*\n\nCurrent: *${currentLabel}*\n\nChoose a preset below, or send:\n\`/schedule HH:MM\` _(24h UTC, e.g. /schedule 14:30)_`,
+        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: rows } }
+      );
+    });
+
     bot.on('callback_query', async (query) => {
       const { data, message } = query;
-      await bot.answerCallbackQuery(query.id).catch(() => {}); // dismiss loading spinner
+      await bot.answerCallbackQuery(query.id).catch(() => {});
 
       if (data?.startsWith('set_focus:')) {
         const focusType = data.split(':')[1];
         await handleSetFocus(focusType, message.message_id);
+      } else if (data?.startsWith('set_schedule:')) {
+        // cron expression is everything after "set_schedule:"
+        const newCron = data.slice('set_schedule:'.length);
+        await handleSetSchedule(newCron, message.message_id);
       } else if (data?.startsWith('regenerate:') && onRegenerate) {
         const postId = data.split(':')[1];
         await onRegenerate(postId, message.message_id);
       } else if (data?.startsWith('mark_posted:') && onMarkPosted) {
         const postId = data.split(':')[1];
         await onMarkPosted(postId, message.message_id);
+      } else if (data?.startsWith('discard:') && onDiscard) {
+        const postId = data.split(':')[1];
+        await onDiscard(postId, message.message_id);
       }
     });
 
@@ -116,10 +213,12 @@ function getBot() {
   return bot;
 }
 
+// ============================================================
+// Command handlers
+// ============================================================
+
 /**
  * Handle a focus selection from the /focus keyboard.
- * Updates app_config, edits the keyboard to reflect the new selection,
- * and sends a confirmation message.
  */
 async function handleSetFocus(focusType, messageId) {
   const option = FOCUS_OPTIONS.find((o) => o.type === focusType);
@@ -150,7 +249,6 @@ async function handleSetFocus(focusType, messageId) {
       })
       .eq('id', existing.id);
 
-    // Update keyboard to show the new active option
     const updatedKeyboard = FOCUS_OPTIONS.map((opt) => [
       {
         text: opt.type === focusType ? `${opt.label} ✓` : opt.label,
@@ -177,8 +275,7 @@ async function handleSetFocus(focusType, messageId) {
 }
 
 /**
- * Save a free-text custom focus sent as /focus <text>.
- * Sets growth_focus_type = 'CUSTOM' and stores the full text as description.
+ * Handle /focus <text> — save as CUSTOM focus.
  */
 async function handleSetCustomFocus(customText, chatId) {
   const b = getBot();
@@ -218,17 +315,126 @@ async function handleSetCustomFocus(customText, chatId) {
   }
 }
 
+/**
+ * Handle a schedule selection from the /schedule keyboard.
+ * Updates DB, restarts the live cron, updates the keyboard ✓.
+ */
+async function handleSetSchedule(newCron, messageId) {
+  const b = getBot();
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!b || !chatId) return;
+
+  try {
+    const { data: existing } = await supabase
+      .from('app_config')
+      .select('id')
+      .limit(1)
+      .maybeSingle();
+
+    if (!existing) {
+      await b.sendMessage(chatId, '❌ No app config found. Set up your config first.');
+      return;
+    }
+
+    await supabase
+      .from('app_config')
+      .update({ generate_cron: newCron, updated_at: new Date().toISOString() })
+      .eq('id', existing.id);
+
+    if (onScheduleChange) onScheduleChange(newCron);
+
+    // Update keyboard to show the new active preset
+    const rows = [];
+    for (let i = 0; i < SCHEDULE_PRESETS.length; i += 2) {
+      const row = SCHEDULE_PRESETS.slice(i, i + 2).map((p) => ({
+        text: p.cron === newCron ? `${p.label} ✓` : p.label,
+        callback_data: `set_schedule:${p.cron}`,
+      }));
+      rows.push(row);
+    }
+
+    await b.editMessageReplyMarkup(
+      { inline_keyboard: rows },
+      { chat_id: chatId, message_id: messageId }
+    );
+
+    await b.sendMessage(
+      chatId,
+      `✅ Schedule updated to *${cronToHuman(newCron)}*`,
+      { parse_mode: 'Markdown' }
+    );
+
+    console.log(`[Telegram] Schedule set to: ${newCron}`);
+  } catch (err) {
+    console.error('[Telegram] Failed to update schedule:', err.message);
+    await b.sendMessage(chatId, `❌ Failed to update schedule: ${err.message}`).catch(() => {});
+  }
+}
+
+/**
+ * Handle /schedule HH:MM — parse, validate, and save as custom schedule.
+ */
+async function handleSetCustomSchedule(arg, chatId) {
+  const b = getBot();
+  if (!b || !chatId) return;
+
+  const newCron = timeToCron(arg);
+
+  if (!newCron) {
+    await b.sendMessage(
+      chatId,
+      `❌ Invalid time format: \`${arg}\`\n\nUse 24h format, e.g. \`/schedule 14:30\``,
+      { parse_mode: 'Markdown' }
+    );
+    return;
+  }
+
+  try {
+    const { data: existing } = await supabase
+      .from('app_config')
+      .select('id')
+      .limit(1)
+      .maybeSingle();
+
+    if (!existing) {
+      await b.sendMessage(chatId, '❌ No app config found. Set up your config first.');
+      return;
+    }
+
+    await supabase
+      .from('app_config')
+      .update({ generate_cron: newCron, updated_at: new Date().toISOString() })
+      .eq('id', existing.id);
+
+    if (onScheduleChange) onScheduleChange(newCron);
+
+    await b.sendMessage(
+      chatId,
+      `✅ Schedule updated to *${cronToHuman(newCron)}*`,
+      { parse_mode: 'Markdown' }
+    );
+
+    console.log(`[Telegram] Custom schedule set: ${newCron}`);
+  } catch (err) {
+    console.error('[Telegram] Failed to set custom schedule:', err.message);
+    await b.sendMessage(chatId, `❌ Failed to update schedule: ${err.message}`).catch(() => {});
+  }
+}
+
 // ============================================================
 // Exported utilities
 // ============================================================
 
 /**
- * Register the handlers for post-level inline button callbacks.
+ * Register handlers for commands that require cross-service calls.
  * Called from index.js after all services are loaded.
  */
-function registerCallbackHandlers({ regenerate, markPosted }) {
+function registerCallbackHandlers({ regenerate, markPosted, discard, generate, scheduleChange }) {
   onRegenerate = regenerate;
   onMarkPosted = markPosted;
+  onDiscard = discard;
+  onGenerate = generate;
+  onScheduleChange = scheduleChange;
 }
 
 function buildKeyboard(postId) {
@@ -236,16 +442,19 @@ function buildKeyboard(postId) {
     inline_keyboard: [
       [
         { text: '🔁 Regenerate', callback_data: `regenerate:${postId}` },
+        { text: '🗑️ Discard', callback_data: `discard:${postId}` },
+      ],
+      [
         { text: '✅ Mark as Posted', callback_data: `mark_posted:${postId}` },
       ],
     ],
   };
 }
 
-/**
- * Send a new post to Telegram with inline action buttons.
- * Returns the Telegram message_id so we can edit it later.
- */
+function buildMessageText(subreddit, content) {
+  return `📍 *r/${subreddit}*\n\n${content}`;
+}
+
 async function sendPost(post) {
   const b = getBot();
   if (!b) {
@@ -259,7 +468,9 @@ async function sendPost(post) {
     return null;
   }
 
-  const msg = await b.sendMessage(chatId, post.content, {
+  const text = buildMessageText(post.subreddit, post.content);
+
+  const msg = await b.sendMessage(chatId, text, {
     parse_mode: 'Markdown',
     reply_markup: buildKeyboard(post.id),
   });
@@ -267,18 +478,16 @@ async function sendPost(post) {
   return msg.message_id;
 }
 
-/**
- * Edit an existing Telegram message with new content (after regeneration).
- * Preserves the inline keyboard.
- */
-async function editPost(messageId, newContent, postId) {
+async function editPost(messageId, newContent, postId, subreddit) {
   const b = getBot();
   if (!b) return;
 
   const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!chatId) return;
 
-  await b.editMessageText(newContent, {
+  const text = subreddit ? buildMessageText(subreddit, newContent) : newContent;
+
+  await b.editMessageText(text, {
     chat_id: chatId,
     message_id: messageId,
     parse_mode: 'Markdown',
@@ -286,18 +495,16 @@ async function editPost(messageId, newContent, postId) {
   });
 }
 
-/**
- * Edit an existing Telegram message to append a "marked as posted" notice.
- * Removes the inline keyboard buttons.
- */
-async function markMessageAsPosted(messageId, originalContent) {
+async function markMessageAsPosted(messageId, subreddit, originalContent) {
   const b = getBot();
   if (!b) return;
 
   const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!chatId) return;
 
-  await b.editMessageText(`${originalContent}\n\n✅ _Marked as posted._`, {
+  const base = subreddit ? buildMessageText(subreddit, originalContent) : originalContent;
+
+  await b.editMessageText(`${base}\n\n✅ _Marked as posted._`, {
     chat_id: chatId,
     message_id: messageId,
     parse_mode: 'Markdown',
@@ -305,9 +512,23 @@ async function markMessageAsPosted(messageId, originalContent) {
   });
 }
 
-/**
- * Send a plain text notification (errors, system messages).
- */
+async function markMessageAsDiscarded(messageId, subreddit, originalContent) {
+  const b = getBot();
+  if (!b) return;
+
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!chatId) return;
+
+  const base = subreddit ? buildMessageText(subreddit, originalContent) : originalContent;
+
+  await b.editMessageText(`${base}\n\n🗑️ _Discarded._`, {
+    chat_id: chatId,
+    message_id: messageId,
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [] },
+  });
+}
+
 async function notify(text) {
   const b = getBot();
   if (!b) return;
@@ -325,6 +546,7 @@ module.exports = {
   sendPost,
   editPost,
   markMessageAsPosted,
+  markMessageAsDiscarded,
   notify,
   registerCallbackHandlers,
   FOCUS_OPTIONS,

@@ -4,14 +4,13 @@ const { sendPost, editPost } = require('./telegram');
 
 /**
  * Core generation logic — shared by daily cron and regenerate flow.
- * Fetches config, daily input, recent posts, calls OpenAI.
+ * Returns the generated content AND the chosen subreddit.
  *
  * @param {Object} config      - app_config row
  * @param {string|null} whatBuilt
- * @param {string|null} dailyInputId
- * @returns {{ content: string, dailyInputId: string|null }}
+ * @returns {{ content: string, subreddit: string }}
  */
-async function _generate(config, whatBuilt, dailyInputId) {
+async function _generate(config, whatBuilt) {
   // Fetch last 5 posted entries to avoid repeating angles
   const { data: recentPosts } = await supabase
     .from('posts')
@@ -36,7 +35,7 @@ async function _generate(config, whatBuilt, dailyInputId) {
     subreddit
   );
 
-  return { content, dailyInputId };
+  return { content, subreddit };
 }
 
 /**
@@ -90,17 +89,17 @@ async function runDailyGeneration() {
     .maybeSingle();
 
   // 4. Generate
-  const { content } = await _generate(
+  const { content, subreddit } = await _generate(
     config,
-    dailyInput?.what_was_built || null,
-    dailyInput?.id || null
+    dailyInput?.what_was_built || null
   );
 
-  // 5. Save as PENDING
+  // 5. Save as PENDING — include subreddit for display purposes
   const { data: post, error: insertError } = await supabase
     .from('posts')
     .insert({
       daily_input_id: dailyInput?.id || null,
+      subreddit,
       content,
       status: 'PENDING',
     })
@@ -133,7 +132,6 @@ async function runDailyGeneration() {
  * @returns {Object} updated post row
  */
 async function regeneratePost(postId) {
-  // Fetch existing post
   const { data: existing, error: fetchError } = await supabase
     .from('posts')
     .select('*')
@@ -143,7 +141,6 @@ async function regeneratePost(postId) {
   if (fetchError || !existing) throw new Error('Post not found');
   if (existing.status !== 'PENDING') throw new Error('Only PENDING posts can be regenerated');
 
-  // Fetch config
   const { data: config, error: configError } = await supabase
     .from('app_config')
     .select('*')
@@ -152,7 +149,6 @@ async function regeneratePost(postId) {
 
   if (configError || !config) throw new Error('No app config found');
 
-  // Fetch daily input if linked
   let whatBuilt = null;
   if (existing.daily_input_id) {
     const { data: di } = await supabase
@@ -163,10 +159,9 @@ async function regeneratePost(postId) {
     whatBuilt = di?.what_was_built || null;
   }
 
-  // Generate fresh content
-  const { content } = await _generate(config, whatBuilt, existing.daily_input_id);
+  // Generate fresh content — reuse the same subreddit as the original post
+  const { content } = await _generate(config, whatBuilt);
 
-  // Overwrite the same post record
   const { data: updated, error: updateError } = await supabase
     .from('posts')
     .update({ content })
@@ -178,9 +173,9 @@ async function regeneratePost(postId) {
 
   console.log(`[Generator] Post ${postId} regenerated`);
 
-  // Edit the existing Telegram message
+  // Edit the existing Telegram message with new content
   if (existing.telegram_message_id) {
-    await editPost(existing.telegram_message_id, content, postId);
+    await editPost(existing.telegram_message_id, content, postId, existing.subreddit);
   }
 
   return updated;
